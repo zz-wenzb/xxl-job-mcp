@@ -1,0 +1,32 @@
+# XXL-JOB MCP 配置文件示例
+# 复制此文件为 config.yaml 并根据实际情况修改
+
+# XXL-JOB 调度中心配置
+xxl_job:
+  # 调度中心地址（根据实际部署修改）
+  admin_address: "http://localhost:8080/xxl-job-admin"
+  
+  # 访问令牌（如果启用了安全认证，取消注释并填写）
+  # access_token: "your-access-token-here"
+  
+  # HTTP 请求超时时间（秒）
+  timeout: 30
+  
+  # 最大重试次数
+  max_retries: 3
+
+# MCP 服务器配置
+mcp:
+  # 服务器名称
+  name: "xxl-job-mcp"
+  
+  # 服务器描述
+  description: "XXL-JOB 分布式任务调度 MCP 服务"
+  
+  # 传输方式：stdio（本地）或 streamable-http（远程）
+  transport: "stdio"
+  
+  # HTTP 传输模式配置（仅当 transport 为 streamable-http 时生效）
+  host: "127.0.0.1"
+  port: 25822
+  path: "/mcp"
