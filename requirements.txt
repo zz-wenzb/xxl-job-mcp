@@ -1,0 +1,13 @@
+# XXL-JOB MCP 依赖包
+
+# MCP 服务器框架
+fastmcp>=0.1.0
+
+# HTTP 客户端
+httpx>=0.24.0
+
+# 数据验证和配置管理
+pydantic>=2.0.0
+
+# YAML 配置文件解析
+pyyaml>=6.0

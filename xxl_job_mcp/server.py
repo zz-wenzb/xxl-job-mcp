@@ -240,7 +240,10 @@ class XXLJobMCPServer:
             try:
                 # 先获取当前任务信息
                 current_job = await self.xxl_job_client.get_job_by_id(job_id)
-                job_data = current_job.get("content", {})
+                # XXL-JOB 2.x 返回的是 content 字段
+                job_data = current_job.get("content", current_job.get("data", {}))
+                if not job_data:
+                    raise Exception(f"无法获取任务 {job_id} 的信息")
                 job_data["id"] = job_id
                 
                 # 更新提供的字段
@@ -435,14 +438,21 @@ class XXLJobMCPServer:
         # ========== 统计工具 ==========
         
         @self.mcp.tool()
-        async def get_dashboard() -> Dict[str, Any]:
+        async def get_dashboard(
+            start_date: Optional[str] = None,
+            end_date: Optional[str] = None
+        ) -> Dict[str, Any]:
             """获取仪表盘统计信息
             
+            Args:
+                start_date: 开始日期，格式 YYYY-MM-DD，默认7天前
+                end_date: 结束日期，格式 YYYY-MM-DD，默认今天
+                
             Returns:
                 仪表盘统计数据
             """
             try:
-                result = await self.xxl_job_client.get_dashboard_info()
+                result = await self.xxl_job_client.get_dashboard_info(start_date, end_date)
                 return {
                     "success": True,
                     "data": result

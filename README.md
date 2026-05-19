@@ -42,7 +42,13 @@ cp config.example.yaml config.yaml
 ```yaml
 xxl_job:
   admin_address: "http://your-xxl-job-host:8080/xxl-job-admin"
-  access_token: "your-token-here"  # 如果启用了认证
+  
+  # 登录用户名和密码（用于 API 认证）
+  username: "admin"
+  password: "123456"
+  
+  # 访问令牌（如果启用了 accessToken 认证，可选）
+  # access_token: "your-token-here"
 
 mcp:
   transport: "stdio"  # 或 "streamable-http"
@@ -119,7 +125,7 @@ uvx xxl-job-mcp --config /path/to/config.yaml
 - `get_job_log(log_id, from_line)` - 获取日志详情
 
 ### 统计信息
-- `get_dashboard()` - 获取仪表盘统计
+- `get_dashboard(start_date, end_date)` - 获取仪表盘统计（可选日期范围）
 
 ## 使用示例
 
@@ -148,7 +154,8 @@ list_job_logs(job_id=123, page_size=10)
 get_job_log(log_id=456)
 
 # 统计信息
-get_dashboard()
+get_dashboard()  # 默认最近7天
+get_dashboard(start_date="2026-05-01", end_date="2026-05-19")  # 指定日期范围
 ```
 
 ## 常见问题
@@ -157,7 +164,9 @@ get_dashboard()
 检查 `admin_address` 是否正确，XXL-JOB 调度中心是否运行。
 
 ### 认证失败
-如果 XXL-JOB 启用了访问令牌，在配置文件中设置 `access_token`。
+XXL-JOB 2.x 使用用户名密码登录认证。在配置文件中设置 `username` 和 `password`（默认 admin/123456）。
+
+如果服务端启用了 accessToken 认证，可以额外配置 `access_token`。
 
 ### 多环境配置
 为每个环境创建独立的配置文件：
@@ -167,7 +176,7 @@ uvx xxl-job-mcp --config config.prod.yaml  # 生产
 ```
 
 ### 支持的 XXL-JOB 版本
-支持 XXL-JOB 2.x 及以上版本。
+支持 XXL-JOB 2.x 及以上版本，已测试 2.3.1。
 
 ## 更多文档
 

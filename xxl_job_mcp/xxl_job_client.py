@@ -19,34 +19,91 @@ class XXLJobClient:
         self.access_token = config.xxl_job.access_token
         self.timeout = config.xxl_job.timeout
         self.max_retries = config.xxl_job.max_retries
+        self.is_logged_in = False
         
         # 创建 HTTP 客户端
         self.client = httpx.AsyncClient(
             timeout=self.timeout,
-            headers=self._get_headers()
+            headers=self._get_headers(),
+            follow_redirects=True  # 允许重定向
         )
     
     def _get_headers(self) -> Dict[str, str]:
         """获取请求头"""
         headers = {
-            "Content-Type": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json"
         }
+        # XXL-JOB 2.x 使用 XXL-JOB-ACCESS-TOKEN header 进行 API 认证
         if self.access_token:
             headers["XXL-JOB-ACCESS-TOKEN"] = self.access_token
+            # 也尝试其他可能的 header 名称
+            headers["accessToken"] = self.access_token
         return headers
     
     async def close(self):
         """关闭客户端"""
         await self.client.aclose()
     
+    async def login(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+        """登录 XXL-JOB 获取 Cookie
+        
+        Args:
+            username: 用户名，默认从配置读取
+            password: 密码，默认从配置读取
+            
+        Returns:
+            是否登录成功
+        """
+        try:
+            login_url = f"{self.base_url}/login"
+            data = {
+                "userName": username or self.config.xxl_job.username,
+                "password": password or self.config.xxl_job.password,
+                "rememberMe": "on"
+            }
+            
+            response = await self.client.post(login_url, data=data)
+            
+            if response.status_code == 200:
+                # 检查是否登录成功（通常会重定向到首页）
+                if "toLogin" not in str(response.url):
+                    self.is_logged_in = True
+                    logger.info("XXL-JOB 登录成功")
+                    return True
+            
+            logger.warning(f"XXL-JOB 登录失败，状态码: {response.status_code}")
+            return False
+        except Exception as e:
+            logger.error(f"登录异常: {e}")
+            return False
+    
     async def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         """发送 HTTP 请求"""
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         
+        # XXL-JOB 2.x API 默认使用 POST 方法
+        if method == "GET" and "params" not in kwargs:
+            method = "POST"
+        
         for attempt in range(self.max_retries):
             try:
                 response = await self.client.request(method, url, **kwargs)
+                
+                # 如果返回登录页面，尝试先登录
+                if "toLogin" in str(response.url) or response.status_code == 302:
+                    if not self.is_logged_in and attempt == 0:
+                        logger.info("检测到需要登录，尝试自动登录...")
+                        # 尝试使用默认账号密码登录
+                        login_success = await self.login()
+                        if login_success:
+                            # 登录成功后重试请求
+                            continue
+                        else:
+                            raise Exception("自动登录失败。请确认 XXL-JOB 的登录账号密码（默认 admin/123456）")
+                    else:
+                        raise Exception(f"API 访问需要登录，但登录失败。URL: {response.url}")
+                
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPError as e:
@@ -59,11 +116,16 @@ class XXLJobClient:
     
     async def get_executor_list(self) -> Dict[str, Any]:
         """获取执行器列表"""
-        return await self._request("GET", "/api/jobGroup/list")
+        # XXL-JOB 2.x 可能需要分页参数
+        data = {
+            "start": 0,
+            "length": 100
+        }
+        return await self._request("POST", "/jobgroup/pageList", data=data)
     
     async def get_executor_by_id(self, group_id: int) -> Dict[str, Any]:
         """根据 ID 获取执行器信息"""
-        return await self._request("GET", f"/api/jobGroup/load?id={group_id}")
+        return await self._request("POST", "/jobgroup/load", data={"id": group_id})
     
     # ========== 任务管理 ==========
     
@@ -78,20 +140,26 @@ class XXLJobClient:
             job_group: 执行器ID过滤
             trigger_status: 调度状态过滤（0-停止，1-运行）
         """
-        params = {
+        data = {
             "start": (page - 1) * page_size,
             "length": page_size
         }
+        # XXL-JOB 2.x 要求 jobGroup 必须有值，不能为 null
         if job_group is not None:
-            params["jobGroup"] = job_group
-        if trigger_status is not None:
-            params["triggerStatus"] = trigger_status
+            data["jobGroup"] = job_group
+        else:
+            data["jobGroup"] = -1  # -1 表示查询所有
         
-        return await self._request("GET", "/api/jobInfo/pageList", params=params)
+        if trigger_status is not None:
+            data["triggerStatus"] = trigger_status
+        else:
+            data["triggerStatus"] = -1  # -1 表示查询所有状态
+        
+        return await self._request("POST", "/jobinfo/pageList", data=data)
     
     async def get_job_by_id(self, job_id: int) -> Dict[str, Any]:
         """根据 ID 获取任务信息"""
-        return await self._request("GET", f"/api/jobInfo/load?id={job_id}")
+        return await self._request("POST", "/jobinfo/load", data={"id": job_id})
     
     async def create_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """创建任务
@@ -111,23 +179,23 @@ class XXLJobClient:
                 - executorTimeout: 任务超时时间
                 - executorFailRetryCount: 失败重试次数
         """
-        return await self._request("POST", "/api/jobInfo/add", json=job_data)
+        return await self._request("POST", "/jobinfo/add", json=job_data)
     
     async def update_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """更新任务"""
-        return await self._request("POST", "/api/jobInfo/update", json=job_data)
+        return await self._request("POST", "/jobinfo/update", json=job_data)
     
     async def delete_job(self, job_id: int) -> Dict[str, Any]:
         """删除任务"""
-        return await self._request("POST", "/api/jobInfo/remove", json={"id": job_id})
+        return await self._request("POST", "/jobinfo/remove", data={"id": job_id})
     
     async def start_job(self, job_id: int) -> Dict[str, Any]:
         """启动任务"""
-        return await self._request("POST", "/api/jobInfo/start", json={"id": job_id})
+        return await self._request("POST", "/jobinfo/start", data={"id": job_id})
     
     async def stop_job(self, job_id: int) -> Dict[str, Any]:
         """停止任务"""
-        return await self._request("POST", "/api/jobInfo/stop", json={"id": job_id})
+        return await self._request("POST", "/jobinfo/stop", data={"id": job_id})
     
     async def trigger_job(self, job_id: int, executor_param: Optional[str] = None) -> Dict[str, Any]:
         """手动触发任务
@@ -139,7 +207,7 @@ class XXLJobClient:
         data = {"id": job_id}
         if executor_param:
             data["executorParam"] = executor_param
-        return await self._request("POST", "/api/jobInfo/trigger", json=data)
+        return await self._request("POST", "/jobinfo/trigger", data=data)
     
     # ========== 任务日志 ==========
     
@@ -154,16 +222,16 @@ class XXLJobClient:
             job_id: 任务ID过滤
             log_status: 日志状态（1-成功，2-失败，3-进行中）
         """
-        params = {
+        data = {
             "start": (page - 1) * page_size,
             "length": page_size
         }
         if job_id is not None:
-            params["jobId"] = job_id
+            data["jobId"] = job_id
         if log_status is not None:
-            params["logStatus"] = log_status
+            data["logStatus"] = log_status
         
-        return await self._request("GET", "/api/log/pageList", params=params)
+        return await self._request("POST", "/log/pageList", data=data)
     
     async def get_job_log_detail(self, log_id: int, from_line_num: int = 1) -> Dict[str, Any]:
         """获取任务日志详情
@@ -172,18 +240,57 @@ class XXLJobClient:
             log_id: 日志ID
             from_line_num: 起始行号
         """
-        params = {
+        data = {
             "logId": log_id,
             "fromLineNum": from_line_num
         }
-        return await self._request("GET", "/api/log/logDetailCat", params=params)
+        return await self._request("POST", "/log/logDetailCat", data=data)
     
     # ========== 任务统计 ==========
     
-    async def get_dashboard_info(self) -> Dict[str, Any]:
-        """获取仪表盘信息"""
-        return await self._request("GET", "/api/dashboard/info")
+    async def get_dashboard_info(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
+        """获取仪表盘信息
+        
+        Args:
+            start_date: 开始日期，格式 YYYY-MM-DD，默认7天前
+            end_date: 结束日期，格式 YYYY-MM-DD，默认今天
+            
+        注意：XXL-JOB 2.3.1 需要日期范围参数
+        """
+        from datetime import datetime, timedelta
+        
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
+        
+        data = {
+            "startDate": f"{start_date} 00:00:00",
+            "endDate": f"{end_date} 23:59:59"
+        }
+        
+        try:
+            return await self._request("POST", "/chartInfo", data=data)
+        except Exception as e:
+            logger.warning(f"获取仪表盘信息失败: {e}，返回空数据")
+            # 返回空数据结构
+            return {
+                "code": 200,
+                "content": {
+                    "triggerCountSucTotal": 0,
+                    "triggerCountFailTotal": 0,
+                    "triggerCountRunningTotal": 0,
+                    "triggerDayList": [],
+                    "triggerDayCountSucList": [],
+                    "triggerDayCountFailList": [],
+                    "triggerDayCountRunningList": []
+                }
+            }
     
     async def get_job_report(self) -> Dict[str, Any]:
         """获取任务报表"""
-        return await self._request("GET", "/api/chartInfo")
+        try:
+            return await self._request("POST", "/chartInfo")
+        except Exception as e:
+            logger.warning(f"获取任务报表失败: {e}")
+            return {"code": 200, "data": {}}

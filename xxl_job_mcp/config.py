@@ -20,7 +20,19 @@ class XXLJobConfig(BaseModel):
     # 访问令牌（如果启用了安全认证）
     access_token: Optional[str] = Field(
         default=None,
-        description="访问令牌，用于安全认证"
+        description="访问令牌，用于 API 认证（可选）"
+    )
+    
+    # 登录用户名（用于 Cookie 认证）
+    username: str = Field(
+        default="admin",
+        description="XXL-JOB 登录用户名"
+    )
+    
+    # 登录密码（用于 Cookie 认证）
+    password: str = Field(
+        default="123456",
+        description="XXL-JOB 登录密码"
     )
     
     # 超时设置
